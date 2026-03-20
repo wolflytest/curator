@@ -3,13 +3,20 @@ Ana işlem hattı:
   URL → yt-dlp ile indir → ffmpeg ile ses ayır →
   PySceneDetect ile frame seç → Groq Whisper transkripsiyon →
   Gemini görsel + metin analizi → sonuç döndür
+
+Twitter/X desteği:
+  Video tweet → normal pipeline
+  Metin tweet → oEmbed API ile tweet metni çek → doğrudan Gemini'ye gönder
 """
+import json
 import logging
 import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 import cv2
@@ -22,7 +29,7 @@ from google.genai import errors as genai_errors
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from google.genai import types as genai_types
 
-from config import GEMINI_API_KEY, GROQ_API_KEY, MAX_FRAMES, TMP_DIR
+from config import COOKIE_FILE, GEMINI_API_KEY, GROQ_API_KEY, MAX_FRAMES, TMP_DIR
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +59,125 @@ def detect_platform(url: str) -> str:
         return "TikTok"
     if "youtube.com" in url_lower or "youtu.be" in url_lower:
         return "YouTube"
+    if "twitter.com" in url_lower or "x.com" in url_lower:
+        return "Twitter"
     return "Diğer"
+
+
+def fetch_tweet_text(url: str) -> tuple[str, str]:
+    """
+    Twitter oEmbed API ile tweet metnini çek.
+    (tweet_metni, başlık) döndürür.
+    """
+    oembed_url = f"https://publish.twitter.com/oembed?url={url}&omit_script=true"
+    req = urllib.request.Request(oembed_url, headers={"User-Agent": "curator-bot/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode())
+
+    html = data.get("html", "")
+    author = data.get("author_name", "")
+
+    # <p> etiketi içindeki tweet metnini çıkar.
+    # Yazar adı ve tarih linkleri zaten <p> dışında olduğundan ayrıca filtremeye gerek yok.
+    class _TextExtractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.texts: list[str] = []
+            self._in_p = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "p":
+                self._in_p = True
+
+        def handle_endtag(self, tag):
+            if tag == "p":
+                self._in_p = False
+
+        def handle_data(self, data):
+            if self._in_p:
+                self.texts.append(data)
+
+    parser = _TextExtractor()
+    parser.feed(html)
+    tweet_text = " ".join(t.strip() for t in parser.texts if t.strip())
+
+    if not tweet_text:
+        # Fallback: tüm düz metni topla
+        class _AllText(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.texts: list[str] = []
+            def handle_data(self, data):
+                if data.strip():
+                    self.texts.append(data.strip())
+        p2 = _AllText()
+        p2.feed(html)
+        tweet_text = " ".join(p2.texts)
+
+    title = f"@{author} tweet'i" if author else "Tweet"
+    log.info("Tweet metni alındı (%d karakter): %s", len(tweet_text), title)
+    return tweet_text, title
+
+
+def analyse_tweet_text(
+    tweet_text: str,
+    title: str,
+    note: str = "",
+) -> tuple[str, int]:
+    """
+    Metin içerikli tweet'i doğrudan Gemini'ye gönder.
+    (analiz_metni, öncelik_skoru) döndürür.
+    """
+    log.info("Tweet metin analizi başlıyor...")
+
+    prompt = f"""Sen bir içerik analiz uzmanısın. Aşağıdaki tweet'i Türkçe olarak analiz et:
+
+## 1. GENEL BİLGİ
+- Tweet konusu nedir (1-2 cümle)
+- Hedef kitle kim
+- Paylaşım amacı (bilgi vermek / görüş bildirmek / duyurmak / tartışmak)
+
+## 2. TEMEL İÇERİK
+- Tweet'te öne çıkan ana fikir veya argüman
+- Belirtilen önemli veriler, rakamlar veya bağlantılar
+- Varsa; bahsedilen araçlar, platformlar veya kaynaklar
+
+## 3. İPUÇLARI VE ÖNEMLİ NOKTALAR
+- Tweet'ten çıkarılabilecek pratik bilgiler veya öneriler
+- Dikkat çekici veya takip edilmesi gereken noktalar
+
+## 4. SONUÇ
+Bu tweet'i okuyan kişi ne kazanır, ne öğrenir veya ne yapmalıdır
+
+## 5. ÖNCELİK SKORU
+Bu içeriğin öncelik skoru: X/10 (sadece rakam, örnek: 7/10)
+Neden bu skoru verdin:
+
+---
+Tweet metni: {tweet_text}
+Kullanıcı notu: {note or "(not yok)"}"""
+
+    parts = [prompt]
+    try:
+        analysis = _call_gemini(GEMINI_MODEL_PRIMARY, parts)
+        log.info("Model kullanıldı: %s", GEMINI_MODEL_PRIMARY)
+    except genai_errors.ClientError as exc:
+        if getattr(exc, "status_code", 0) == 429:
+            log.warning("Kota bitti (%s), fallback model deneniyor: %s",
+                        GEMINI_MODEL_PRIMARY, GEMINI_MODEL_FALLBACK)
+            analysis = _call_gemini(GEMINI_MODEL_FALLBACK, parts)
+            log.info("Model kullanıldı: %s", GEMINI_MODEL_FALLBACK)
+        else:
+            raise
+
+    match = re.search(r"ÖNCELİK SKORU.*?(\d+)/10", analysis, re.DOTALL | re.IGNORECASE)
+    if not match:
+        match = re.search(r"(\d+)/10", analysis)
+    priority = int(match.group(1)) if match else 5
+    priority = max(1, min(10, priority))
+
+    log.info("Tweet analizi tamamlandı (öncelik=%d, %d karakter)", priority, len(analysis))
+    return analysis, priority
 
 
 def download_video(url: str, work_dir: Path) -> tuple[Path, str]:
@@ -69,6 +194,9 @@ def download_video(url: str, work_dir: Path) -> tuple[Path, str]:
         "no_warnings": True,
         "merge_output_format": "mp4",
     }
+    if COOKIE_FILE.exists():
+        ydl_opts["cookiefile"] = str(COOKIE_FILE)
+        log.info("Cookie dosyası kullanılıyor: %s", COOKIE_FILE)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         title = info.get("title", "Başlıksız")
@@ -293,12 +421,19 @@ def run(url: str, note: str = "") -> PipelineResult:
     """
     Tam işlem hattını çalıştır.
     Geçici dosyalar /tmp/curator/<uid>/ altında oluşturulur ve temizlenir.
+
+    Twitter/X için:
+      - Önce video indirme denenir.
+      - Video yoksa (DownloadError) tweet metni oEmbed API ile çekilir.
     """
     platform = detect_platform(url)
     work_dir = Path(tempfile.mkdtemp(dir=TMP_DIR))
     log.info("Çalışma dizini: %s | Platform: %s", work_dir, platform)
 
     try:
+        if platform == "Twitter":
+            return _run_twitter(url, note, platform, work_dir)
+
         video_path, title = download_video(url, work_dir)
         audio_path = extract_audio(video_path, work_dir)
         frames = select_frames(video_path, work_dir)
@@ -314,3 +449,38 @@ def run(url: str, note: str = "") -> PipelineResult:
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
         log.info("Geçici dosyalar temizlendi: %s", work_dir)
+
+
+def _run_twitter(url: str, note: str, platform: str, work_dir: Path) -> PipelineResult:
+    """Twitter/X için: video varsa normal pipeline, yoksa metin analizi."""
+    # Video tweet dene
+    try:
+        video_path, title = download_video(url, work_dir)
+        log.info("Twitter video tweet tespit edildi, normal pipeline çalışıyor.")
+        audio_path = extract_audio(video_path, work_dir)
+        frames = select_frames(video_path, work_dir)
+        transcript = transcribe_audio(audio_path)
+        analysis, priority = analyse_with_gemini(frames, transcript, title, platform, note)
+        return PipelineResult(
+            title=title,
+            platform=platform,
+            transcript=transcript,
+            analysis=analysis,
+            priority=priority,
+        )
+    except yt_dlp.utils.DownloadError as exc:
+        log.info("Twitter'da video bulunamadı (%s), metin tweet olarak işleniyor.", exc)
+
+    # Metin tweet: oEmbed ile içerik çek
+    tweet_text, title = fetch_tweet_text(url)
+    if not tweet_text:
+        raise ValueError("Tweet metni alınamadı ve video da bulunamadı.")
+
+    analysis, priority = analyse_tweet_text(tweet_text, title, note)
+    return PipelineResult(
+        title=title,
+        platform=platform,
+        transcript=tweet_text,
+        analysis=analysis,
+        priority=priority,
+    )

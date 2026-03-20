@@ -24,7 +24,10 @@
       "Bash(venv/bin/python -c \"import bot; print\\('✅ OK'\\)\")",
       "Bash(venv/bin/python -c \"import pipeline; print\\('✅ OK'\\)\" 2>&1)",
       "Bash(venv/bin/python -c \"import pipeline; print\\('✅ OK | model:', pipeline.GEMINI_MODEL\\)\" 2>&1)",
-      "Bash(venv/bin/python -c \"\nfrom google import genai\nimport config\nclient = genai.Client\\(api_key=config.GEMINI_API_KEY\\)\nfor m in client.models.list\\(\\):\n    if '3' in m.name:\n        print\\(m.name\\)\n\")"
+      "Bash(venv/bin/python -c \"\nfrom google import genai\nimport config\nclient = genai.Client\\(api_key=config.GEMINI_API_KEY\\)\nfor m in client.models.list\\(\\):\n    if '3' in m.name:\n        print\\(m.name\\)\n\")",
+      "Bash(venv/bin/python -c \"import pipeline; print\\('OK'\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom pipeline import detect_platform, fetch_tweet_text\nprint\\(detect_platform\\('https://twitter.com/user/status/123'\\)\\)\nprint\\(detect_platform\\('https://x.com/user/status/456'\\)\\)\nprint\\(detect_platform\\('https://instagram.com/reel/abc'\\)\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"import pipeline; print\\('OK'\\)\")"
     ]
   }
 }

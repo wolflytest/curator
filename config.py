@@ -26,3 +26,6 @@ MAX_FRAMES = 16
 # Günlük özet saati (24 saat formatı)
 SUMMARY_HOUR = 21
 SUMMARY_MINUTE = 0
+
+# Instagram cookie dosyası (sunucuda mevcutsa kullanılır)
+COOKIE_FILE = Path("/home/ubuntu/curator/instagram_cookies.txt")
