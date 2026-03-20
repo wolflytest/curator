@@ -259,10 +259,25 @@ def download_video(url: str, work_dir: Path) -> tuple[Path, str]:
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+            )
+        },
     }
+    is_instagram = "instagram.com" in url.lower()
+    if is_instagram:
+        ydl_opts.update({
+            "sleep_interval_requests": 2,   # istek arası bekleme (rate-limit önlemi)
+            "sleep_interval": 3,            # indirme arası bekleme
+            "extractor_args": {"instagram": {"player_url": ["https://www.instagram.com"]}},
+        })
     if COOKIE_FILE.exists():
         ydl_opts["cookiefile"] = str(COOKIE_FILE)
         log.info("Cookie dosyası kullanılıyor: %s", COOKIE_FILE)
+    elif is_instagram:
+        log.warning("Instagram cookie dosyası bulunamadı: %s — rate-limit riski yüksek", COOKIE_FILE)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         title = info.get("title", "Başlıksız")
