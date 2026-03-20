@@ -14,7 +14,7 @@ from config import GEMINI_API_KEY
 log = logging.getLogger(__name__)
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-GEMINI_MODEL_PRIMARY  = "gemini-2.0-flash"
+GEMINI_MODEL_PRIMARY  = "gemini-3.1-flash-lite-preview"
 GEMINI_MODEL_FALLBACK = "gemini-2.5-flash-lite"
 
 
@@ -86,7 +86,7 @@ Lütfen soruyu sadece yukarıdaki veritabanı kayıtlarına dayanarak yanıtla.
         text = _call_gemini(GEMINI_MODEL_PRIMARY, prompt)
         log.info("Model kullanıldı: %s (%d karakter)", GEMINI_MODEL_PRIMARY, len(text))
     except genai_errors.ClientError as exc:
-        if getattr(exc, "status_code", 0) == 429:
+        if getattr(exc, "status_code", 0) in (404, 429):
             log.warning("Kota bitti (%s), fallback: %s", GEMINI_MODEL_PRIMARY, GEMINI_MODEL_FALLBACK)
             text = _call_gemini(GEMINI_MODEL_FALLBACK, prompt)
             log.info("Model kullanıldı: %s (%d karakter)", GEMINI_MODEL_FALLBACK, len(text))

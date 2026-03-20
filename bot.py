@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 # Desteklenen platform URL'leri
 URL_RE = re.compile(
     r"https?://(?:www\.)?"
-    r"(?:instagram\.com|tiktok\.com|youtube\.com|youtu\.be)"
+    r"(?:instagram\.com|tiktok\.com|youtube\.com|youtu\.be|twitter\.com|x\.com)"
     r"\S+",
     re.IGNORECASE,
 )
@@ -55,6 +55,41 @@ def _parse_tags_and_note(text: str, urls: list[str]) -> tuple[list[str], str]:
         note = note.replace(url, "")
     note = TAG_RE.sub("", note).strip()
     return tags, note
+
+
+def _split_message(text: str, max_len: int = 4096) -> list[str]:
+    """
+    Metni max_len karakterlik parçalara böl.
+    Satır ortasında kesmez; her zaman satır sonundan böler.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in text.splitlines(keepends=True):
+        # Tek satır limitin üzerindeyse zorla böl
+        if len(line) > max_len:
+            if current:
+                chunks.append("".join(current))
+                current, current_len = [], 0
+            for i in range(0, len(line), max_len):
+                chunks.append(line[i:i + max_len])
+            continue
+
+        if current_len + len(line) > max_len:
+            chunks.append("".join(current))
+            current, current_len = [], 0
+
+        current.append(line)
+        current_len += len(line)
+
+    if current:
+        chunks.append("".join(current))
+
+    return chunks
 
 
 def _auth(update: Update) -> bool:
@@ -101,15 +136,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             tag_line = ("🏷 " + "  ".join(f"#{t}" for t in tags) + "\n") if tags else ""
             note_line = (f"📌 _{note}_\n") if note else ""
 
-            await status_msg.edit_text(
+            full_text = (
                 f"✅ Kaydedildi\n\n"
                 f"*{result.title}*\n"
                 f"📱 {result.platform} | 🏆 Öncelik: {result.priority}/10\n"
                 f"{tag_line}{note_line}\n"
-                f"{result.analysis}",
-                parse_mode="Markdown",
+                f"{result.analysis}"
             )
-            log.info("Başarıyla kaydedildi: %s", result.title)
+            chunks = _split_message(full_text)
+            await status_msg.edit_text(chunks[0], parse_mode="Markdown")
+            for chunk in chunks[1:]:
+                await update.message.reply_text(chunk, parse_mode="Markdown")
+            log.info("Başarıyla kaydedildi: %s (%d parça)", result.title, len(chunks))
 
         except Exception as exc:
             log.error("Pipeline hatası: %s", exc, exc_info=True)
@@ -201,7 +239,7 @@ async def send_daily_summary(app: Application) -> None:
         )
 
     full_text = "\n".join(lines)
-    for chunk in [full_text[i:i + 4000] for i in range(0, len(full_text), 4000)]:
+    for chunk in _split_message(full_text):
         await app.bot.send_message(chat_id=TELEGRAM_USER_ID, text=chunk, parse_mode="Markdown")
 
     log.info("Günlük özet gönderildi (%d içerik)", len(rows))
