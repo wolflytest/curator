@@ -36,3 +36,7 @@ GEMINI_MODEL_FALLBACK = "gemini-2.5-flash-lite"
 
 # Sohbet için DB'den kaç kayıt çekileceği
 CHAT_CONTEXT_LIMIT = 50
+
+# OpenClaw bilgi tabanı dizini
+OPENCLAW_DIR = Path(__file__).parent / "openclaw_knowledge"
+OPENCLAW_DIR.mkdir(exist_ok=True)

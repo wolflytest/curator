@@ -31,7 +31,7 @@ from google.genai import types as genai_types
 
 from config import (
     COOKIE_FILE, GEMINI_API_KEY, GEMINI_MODEL_FALLBACK, GEMINI_MODEL_PRIMARY,
-    GROQ_API_KEY, MAX_FRAMES, TMP_DIR,
+    GROQ_API_KEY, MAX_FRAMES, OPENCLAW_DIR, TMP_DIR,
 )
 
 log = logging.getLogger(__name__)
@@ -500,6 +500,50 @@ Kullanıcı notu: {note or "(not yok)"}"""
     return analysis, priority
 
 
+def _url_to_id(url: str) -> str:
+    """URL'den kısa, dosya adına uygun bir ID üret."""
+    # YouTube: ?v=VIDEO_ID
+    yt = re.search(r"[?&]v=([A-Za-z0-9_\-]{6,20})", url)
+    if yt:
+        return yt.group(1)
+    # Diğerleri: son path segmentini al
+    clean = url.rstrip("/").split("?")[0]
+    segment = clean.split("/")[-1] or clean.split("/")[-2]
+    safe = re.sub(r"[^\w\-]", "", segment)
+    return safe[:40] or "unknown"
+
+
+def save_to_openclaw(result: PipelineResult, url: str) -> Path:
+    """
+    Analiz sonucunu openclaw_knowledge/ dizinine Markdown olarak kaydet.
+    Dosya adı: {platform}_{id}_{tarih}.md
+    Var olan dosyanın üzerine yazar (aynı URL tekrar işlenirse).
+    """
+    from datetime import date
+    today = date.today().strftime("%Y%m%d")
+    content_id = _url_to_id(url)
+    platform_slug = re.sub(r"[^\w]", "", result.platform).lower()
+    filename = f"{platform_slug}_{content_id}_{today}.md"
+    filepath = OPENCLAW_DIR / filename
+
+    content = f"""# {result.title}
+
+| Alan | Değer |
+|------|-------|
+| Platform | {result.platform} |
+| URL | {url} |
+| Tarih | {date.today().isoformat()} |
+| Öncelik | {result.priority}/10 |
+
+---
+
+{result.analysis}
+"""
+    filepath.write_text(content, encoding="utf-8")
+    log.info("OpenClaw'a kaydedildi: %s", filepath.name)
+    return filepath
+
+
 def run(url: str, note: str = "") -> PipelineResult:
     """
     Tam işlem hattını çalıştır.
@@ -515,20 +559,22 @@ def run(url: str, note: str = "") -> PipelineResult:
 
     try:
         if platform == "Twitter":
-            return _run_twitter(url, note, platform, work_dir)
-
-        video_path, title = download_video(url, work_dir)
-        audio_path = extract_audio(video_path, work_dir)
-        frames = select_frames(video_path, work_dir)
-        transcript = transcribe_audio(audio_path)
-        analysis, priority = analyse_with_gemini(frames, transcript, title, platform, note)
-        return PipelineResult(
-            title=title,
-            platform=platform,
-            transcript=transcript,
-            analysis=analysis,
-            priority=priority,
-        )
+            result = _run_twitter(url, note, platform, work_dir)
+        else:
+            video_path, title = download_video(url, work_dir)
+            audio_path = extract_audio(video_path, work_dir)
+            frames = select_frames(video_path, work_dir)
+            transcript = transcribe_audio(audio_path)
+            analysis, priority = analyse_with_gemini(frames, transcript, title, platform, note)
+            result = PipelineResult(
+                title=title,
+                platform=platform,
+                transcript=transcript,
+                analysis=analysis,
+                priority=priority,
+            )
+        save_to_openclaw(result, url)
+        return result
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
         log.info("Geçici dosyalar temizlendi: %s", work_dir)
