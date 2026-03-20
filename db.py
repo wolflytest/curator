@@ -71,10 +71,10 @@ def save_content(
         return cur.lastrowid
 
 
-def get_all_contents(limit: int = 200) -> list[sqlite3.Row]:
+def get_all_contents(limit: int = 200) -> list[dict]:
     """Tüm kayıtları önceliğe göre sıralı getir (sohbet bağlamı için)."""
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             """
             SELECT * FROM contents
             ORDER BY priority DESC, created_at DESC
@@ -82,14 +82,15 @@ def get_all_contents(limit: int = 200) -> list[sqlite3.Row]:
             """,
             (limit,),
         ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def get_daily_contents(for_date: date | None = None) -> list[sqlite3.Row]:
+def get_daily_contents(for_date: date | None = None) -> list[dict]:
     """Belirtilen güne ait (varsayılan: bugün) tüm içerikleri getir."""
     target = for_date or date.today()
     date_str = target.strftime("%Y-%m-%d")
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             """
             SELECT * FROM contents
             WHERE date(created_at) = ?
@@ -97,6 +98,7 @@ def get_daily_contents(for_date: date | None = None) -> list[sqlite3.Row]:
             """,
             (date_str,),
         ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_stats() -> dict:
