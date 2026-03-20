@@ -8,16 +8,16 @@ Twitter/X desteği:
   Video tweet → normal pipeline
   Metin tweet → oEmbed API ile tweet metni çek → doğrudan Gemini'ye gönder
 """
-import json
 import logging
 import re
 import shutil
 import subprocess
 import tempfile
-import urllib.request
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
+
+import httpx
 
 import cv2
 import yt_dlp
@@ -66,57 +66,76 @@ def detect_platform(url: str) -> str:
 
 def fetch_tweet_text(url: str) -> tuple[str, str]:
     """
-    Twitter oEmbed API ile tweet metnini çek.
+    Tweet metnini çek. Sırasıyla üç yöntem denenir:
+      1. yt-dlp metadata (skip_download=True)
+      2. Nitter (nitter.poast.org) HTML parse
+    Makale linkleri (x.com/i/article/) desteklenmez.
     (tweet_metni, başlık) döndürür.
     """
-    oembed_url = f"https://publish.twitter.com/oembed?url={url}&omit_script=true"
-    req = urllib.request.Request(oembed_url, headers={"User-Agent": "curator-bot/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        data = json.loads(resp.read().decode())
+    # Makale linkleri desteklenmiyor
+    if "/i/article/" in url:
+        raise ValueError("Makale linkleri (x.com/i/article/) desteklenmiyor.")
 
-    html = data.get("html", "")
-    author = data.get("author_name", "")
+    # --- Yöntem 1: yt-dlp metadata ---
+    try:
+        ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        tweet_text = info.get("description", "") or info.get("title", "")
+        author = info.get("uploader", "") or info.get("channel", "")
+        if tweet_text and tweet_text != author:
+            title = f"@{author} tweet'i" if author else "Tweet"
+            log.info("yt-dlp ile tweet metni alındı (%d karakter)", len(tweet_text))
+            return tweet_text, title
+        log.info("yt-dlp metadata boş, nitter deneniyor...")
+    except Exception as exc:
+        log.info("yt-dlp metadata başarısız (%s), nitter deneniyor...", exc)
 
-    # <p> etiketi içindeki tweet metnini çıkar.
-    # Yazar adı ve tarih linkleri zaten <p> dışında olduğundan ayrıca filtremeye gerek yok.
-    class _TextExtractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.texts: list[str] = []
-            self._in_p = False
+    # --- Yöntem 2: Nitter ---
+    # URL'den kullanıcı adı ve tweet ID'sini çıkar
+    m = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)", url)
+    if not m:
+        raise ValueError(f"Tweet URL'inden kullanıcı adı/ID çıkarılamadı: {url}")
+    username, tweet_id = m.group(1), m.group(2)
 
-        def handle_starttag(self, tag, attrs):
-            if tag == "p":
-                self._in_p = True
+    nitter_url = f"https://nitter.poast.org/{username}/status/{tweet_id}"
+    try:
+        resp = httpx.get(nitter_url, timeout=15, follow_redirects=True,
+                         headers={"User-Agent": "curator-bot/1.0"})
+        resp.raise_for_status()
 
-        def handle_endtag(self, tag):
-            if tag == "p":
-                self._in_p = False
-
-        def handle_data(self, data):
-            if self._in_p:
-                self.texts.append(data)
-
-    parser = _TextExtractor()
-    parser.feed(html)
-    tweet_text = " ".join(t.strip() for t in parser.texts if t.strip())
-
-    if not tweet_text:
-        # Fallback: tüm düz metni topla
-        class _AllText(HTMLParser):
+        class _NitterParser(HTMLParser):
+            """Nitter'da tweet metni <div class="tweet-content ..."> içinde."""
             def __init__(self):
                 super().__init__()
                 self.texts: list[str] = []
-            def handle_data(self, data):
-                if data.strip():
-                    self.texts.append(data.strip())
-        p2 = _AllText()
-        p2.feed(html)
-        tweet_text = " ".join(p2.texts)
+                self._in_content = False
 
-    title = f"@{author} tweet'i" if author else "Tweet"
-    log.info("Tweet metni alındı (%d karakter): %s", len(tweet_text), title)
-    return tweet_text, title
+            def handle_starttag(self, tag, attrs):
+                attrs_dict = dict(attrs)
+                cls = attrs_dict.get("class", "")
+                if tag == "div" and "tweet-content" in cls:
+                    self._in_content = True
+
+            def handle_endtag(self, tag):
+                if tag == "div" and self._in_content:
+                    self._in_content = False
+
+            def handle_data(self, data):
+                if self._in_content and data.strip():
+                    self.texts.append(data.strip())
+
+        parser = _NitterParser()
+        parser.feed(resp.text)
+        tweet_text = " ".join(parser.texts)
+        if tweet_text:
+            title = f"@{username} tweet'i"
+            log.info("Nitter ile tweet metni alındı (%d karakter)", len(tweet_text))
+            return tweet_text, title
+    except Exception as exc:
+        log.warning("Nitter başarısız: %s", exc)
+
+    raise ValueError(f"Tweet metni hiçbir yöntemle alınamadı: {url}")
 
 
 def analyse_tweet_text(
