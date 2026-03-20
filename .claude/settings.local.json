@@ -28,7 +28,9 @@
       "Bash(venv/bin/python -c \"import pipeline; print\\('OK'\\)\" 2>&1)",
       "Bash(venv/bin/python -c \"\nfrom pipeline import detect_platform, fetch_tweet_text\nprint\\(detect_platform\\('https://twitter.com/user/status/123'\\)\\)\nprint\\(detect_platform\\('https://x.com/user/status/456'\\)\\)\nprint\\(detect_platform\\('https://instagram.com/reel/abc'\\)\\)\n\" 2>&1)",
       "Bash(venv/bin/python -c \"import pipeline; print\\('OK'\\)\")",
-      "Bash(venv/bin/python -c \"import db; print\\('OK'\\)\")"
+      "Bash(venv/bin/python -c \"import db; print\\('OK'\\)\")",
+      "Bash(venv/bin/python -c \"\nfrom dotenv import load_dotenv; load_dotenv\\(\\)\nfrom google import genai\nimport os\nclient = genai.Client\\(api_key=os.environ['GEMINI_API_KEY']\\)\nmodels = [m.name for m in client.models.list\\(\\) if 'flash' in m.name.lower\\(\\)]\nfor m in sorted\\(models\\):\n    print\\(m\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"import pipeline; print\\('PRIMARY:', pipeline.GEMINI_MODEL_PRIMARY\\); print\\('FALLBACK:', pipeline.GEMINI_MODEL_FALLBACK\\)\")"
     ]
   }
 }

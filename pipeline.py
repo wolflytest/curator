@@ -162,9 +162,9 @@ Kullanıcı notu: {note or "(not yok)"}"""
         analysis = _call_gemini(GEMINI_MODEL_PRIMARY, parts)
         log.info("Model kullanıldı: %s", GEMINI_MODEL_PRIMARY)
     except genai_errors.ClientError as exc:
-        if getattr(exc, "status_code", 0) == 429:
-            log.warning("Kota bitti (%s), fallback model deneniyor: %s",
-                        GEMINI_MODEL_PRIMARY, GEMINI_MODEL_FALLBACK)
+        if getattr(exc, "status_code", 0) in (404, 429):
+            log.warning("Primary model başarısız (HTTP %s) → fallback: %s",
+                        getattr(exc, "status_code", "?"), GEMINI_MODEL_FALLBACK)
             analysis = _call_gemini(GEMINI_MODEL_FALLBACK, parts)
             log.info("Model kullanıldı: %s", GEMINI_MODEL_FALLBACK)
         else:
@@ -398,9 +398,9 @@ Kullanıcı notu: {note or "(not yok)"}"""
         analysis = _call_gemini(GEMINI_MODEL_PRIMARY, parts)
         log.info("Model kullanıldı: %s", GEMINI_MODEL_PRIMARY)
     except genai_errors.ClientError as exc:
-        if getattr(exc, "status_code", 0) == 429:
-            log.warning("Kota bitti (%s), fallback model deneniyor: %s",
-                        GEMINI_MODEL_PRIMARY, GEMINI_MODEL_FALLBACK)
+        if getattr(exc, "status_code", 0) in (404, 429):
+            log.warning("Primary model başarısız (HTTP %s) → fallback: %s",
+                        getattr(exc, "status_code", "?"), GEMINI_MODEL_FALLBACK)
             analysis = _call_gemini(GEMINI_MODEL_FALLBACK, parts)
             log.info("Model kullanıldı: %s", GEMINI_MODEL_FALLBACK)
         else:
