@@ -101,6 +101,34 @@ def get_daily_contents(for_date: date | None = None) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def search_by_tag(tag: str) -> list[dict]:
+    """Belirli bir tag'e sahip kayıtları önceliğe göre sıralı getir."""
+    tag = tag.lower().lstrip("#")
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM contents
+            WHERE ',' || tags || ',' LIKE ?
+            ORDER BY priority DESC, created_at DESC
+            """,
+            (f"%,{tag},%",),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_content(content_id: int) -> bool:
+    """Kaydı sil. Silinen satır varsa True döndür."""
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM contents WHERE id = ?", (content_id,))
+        conn.commit()
+    deleted = cur.rowcount > 0
+    if deleted:
+        log.info("Kayıt silindi: id=%d", content_id)
+    else:
+        log.warning("Silinecek kayıt bulunamadı: id=%d", content_id)
+    return deleted
+
+
 def get_stats() -> dict:
     """İstatistik verisini döndür."""
     with get_connection() as conn:

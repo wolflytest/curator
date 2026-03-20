@@ -26,19 +26,19 @@ from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 from google import genai
 from google.genai import errors as genai_errors
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from google.genai import types as genai_types
 
-from config import COOKIE_FILE, GEMINI_API_KEY, GROQ_API_KEY, MAX_FRAMES, TMP_DIR
+from config import (
+    COOKIE_FILE, GEMINI_API_KEY, GEMINI_MODEL_FALLBACK, GEMINI_MODEL_PRIMARY,
+    GROQ_API_KEY, MAX_FRAMES, TMP_DIR,
+)
 
 log = logging.getLogger(__name__)
 
 # API istemcilerini başlat
 groq_client = Groq(api_key=GROQ_API_KEY)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-# Önce güçlü model denenir, kota bitince fallback devreye girer
-GEMINI_MODEL_PRIMARY  = "gemini-3.1-flash-lite-preview"
-GEMINI_MODEL_FALLBACK = "gemini-2.5-flash-lite"
 
 
 @dataclass
@@ -64,19 +64,70 @@ def detect_platform(url: str) -> str:
     return "Diğer"
 
 
+def _expand_tco_urls(text: str, entities: dict) -> str:
+    """t.co kısa linklerini entities'den alınan expanded URL ile değiştir."""
+    for entry in entities.get("urls", []):
+        short = entry.get("url", "")
+        expanded = entry.get("expanded_url", "") or entry.get("display_url", "")
+        if short and expanded:
+            text = text.replace(short, expanded)
+    return text
+
+
 def fetch_tweet_text(url: str) -> tuple[str, str]:
     """
-    Tweet metnini çek. Sırasıyla üç yöntem denenir:
-      1. yt-dlp metadata (skip_download=True)
-      2. Nitter (nitter.poast.org) HTML parse
-    Makale linkleri (x.com/i/article/) desteklenmez.
+    Tweet metnini çek. Sırasıyla dört yöntem denenir:
+      1. vxtwitter API (JSON) — makale önizlemesi dahil
+      2. Twitter Syndication API — auth gerektirmez
+      3. yt-dlp metadata (skip_download=True)
+      4. Nitter HTML parse
     (tweet_metni, başlık) döndürür.
     """
-    # Makale linkleri desteklenmiyor
-    if "/i/article/" in url:
-        raise ValueError("Makale linkleri (x.com/i/article/) desteklenmiyor.")
+    m = re.search(r"(?:twitter\.com|x\.com)/([^/?]+)/status/(\d+)", url)
+    if not m:
+        raise ValueError(f"Tweet URL'inden kullanıcı adı/ID çıkarılamadı: {url}")
+    username, tweet_id = m.group(1), m.group(2)
 
-    # --- Yöntem 1: yt-dlp metadata ---
+    # --- Yöntem 1: vxtwitter API ---
+    try:
+        resp = httpx.get(
+            f"https://api.vxtwitter.com/{username}/status/{tweet_id}",
+            timeout=15,
+            headers={"User-Agent": "curl/7.68.0"},
+        )
+        if "application/json" in resp.headers.get("content-type", ""):
+            data = resp.json()
+            raw_text = _expand_tco_urls(data.get("text", ""), data.get("entities", {}))
+            article_preview = data.get("article", {}).get("preview_text", "")
+            if article_preview:
+                raw_text = (raw_text + "\n\n" + article_preview).strip()
+            author_name = data.get("user_name", "") or username
+            if raw_text.strip():
+                log.info("vxtwitter ile tweet metni alındı (%d karakter)", len(raw_text))
+                return raw_text.strip(), f"@{author_name} tweet'i"
+        log.info("vxtwitter başarısız veya boş, syndication deneniyor...")
+    except Exception as exc:
+        log.info("vxtwitter başarısız (%s), syndication deneniyor...", exc)
+
+    # --- Yöntem 2: Twitter Syndication API ---
+    try:
+        resp = httpx.get(
+            f"https://cdn.syndication.twimg.com/tweet-result?id={tweet_id}&lang=en&token=x",
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw_text = _expand_tco_urls(data.get("text", ""), data.get("entities", {}))
+        author_name = data.get("user", {}).get("screen_name", "") or username
+        if raw_text.strip():
+            log.info("Syndication API ile tweet metni alındı (%d karakter)", len(raw_text))
+            return raw_text.strip(), f"@{author_name} tweet'i"
+        log.info("Syndication API boş yanıt, yt-dlp deneniyor...")
+    except Exception as exc:
+        log.info("Syndication API başarısız (%s), yt-dlp deneniyor...", exc)
+
+    # --- Yöntem 3: yt-dlp metadata ---
     try:
         ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -84,20 +135,14 @@ def fetch_tweet_text(url: str) -> tuple[str, str]:
         tweet_text = info.get("description", "") or info.get("title", "")
         author = info.get("uploader", "") or info.get("channel", "")
         if tweet_text and tweet_text != author:
-            title = f"@{author} tweet'i" if author else "Tweet"
+            title = f"@{author} tweet'i" if author else f"@{username} tweet'i"
             log.info("yt-dlp ile tweet metni alındı (%d karakter)", len(tweet_text))
             return tweet_text, title
         log.info("yt-dlp metadata boş, nitter deneniyor...")
     except Exception as exc:
         log.info("yt-dlp metadata başarısız (%s), nitter deneniyor...", exc)
 
-    # --- Yöntem 2: Nitter ---
-    # URL'den kullanıcı adı ve tweet ID'sini çıkar
-    m = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)", url)
-    if not m:
-        raise ValueError(f"Tweet URL'inden kullanıcı adı/ID çıkarılamadı: {url}")
-    username, tweet_id = m.group(1), m.group(2)
-
+    # --- Yöntem 4: Nitter ---
     nitter_url = f"https://nitter.poast.org/{username}/status/{tweet_id}"
     try:
         resp = httpx.get(nitter_url, timeout=15, follow_redirects=True,
@@ -105,33 +150,33 @@ def fetch_tweet_text(url: str) -> tuple[str, str]:
         resp.raise_for_status()
 
         class _NitterParser(HTMLParser):
-            """Nitter'da tweet metni <div class="tweet-content ..."> içinde."""
+            """Nitter'da tweet metni <div class="tweet-content ..."> içinde.
+            Nested div'leri depth counter ile takip eder."""
             def __init__(self):
                 super().__init__()
                 self.texts: list[str] = []
-                self._in_content = False
+                self._depth = 0  # tweet-content div'inden itibaren açık div sayısı
 
             def handle_starttag(self, tag, attrs):
-                attrs_dict = dict(attrs)
-                cls = attrs_dict.get("class", "")
-                if tag == "div" and "tweet-content" in cls:
-                    self._in_content = True
+                if self._depth > 0 and tag == "div":
+                    self._depth += 1
+                elif tag == "div" and "tweet-content" in dict(attrs).get("class", ""):
+                    self._depth = 1
 
             def handle_endtag(self, tag):
-                if tag == "div" and self._in_content:
-                    self._in_content = False
+                if self._depth > 0 and tag == "div":
+                    self._depth -= 1
 
             def handle_data(self, data):
-                if self._in_content and data.strip():
+                if self._depth > 0 and data.strip():
                     self.texts.append(data.strip())
 
         parser = _NitterParser()
         parser.feed(resp.text)
         tweet_text = " ".join(parser.texts)
         if tweet_text:
-            title = f"@{username} tweet'i"
             log.info("Nitter ile tweet metni alındı (%d karakter)", len(tweet_text))
-            return tweet_text, title
+            return tweet_text, f"@{username} tweet'i"
     except Exception as exc:
         log.warning("Nitter başarısız: %s", exc)
 
@@ -192,6 +237,8 @@ Kullanıcı notu: {note or "(not yok)"}"""
     match = re.search(r"ÖNCELİK SKORU.*?(\d+)/10", analysis, re.DOTALL | re.IGNORECASE)
     if not match:
         match = re.search(r"(\d+)/10", analysis)
+    if not match:
+        log.warning("Öncelik skoru çıkarılamadı, varsayılan 5 kullanılıyor.")
     priority = int(match.group(1)) if match else 5
     priority = max(1, min(10, priority))
 
@@ -326,7 +373,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception) if False else __import__("tenacity").retry_if_exception(_is_retryable),
+    retry=retry_if_exception(_is_retryable),
     wait=wait_exponential(multiplier=2, min=10, max=120),
     stop=stop_after_attempt(4),
     reraise=True,
@@ -429,6 +476,8 @@ Kullanıcı notu: {note or "(not yok)"}"""
     match = re.search(r"ÖNCELİK SKORU.*?(\d+)/10", analysis, re.DOTALL | re.IGNORECASE)
     if not match:
         match = re.search(r"(\d+)/10", analysis)
+    if not match:
+        log.warning("Öncelik skoru çıkarılamadı, varsayılan 5 kullanılıyor.")
     priority = int(match.group(1)) if match else 5
     priority = max(1, min(10, priority))
 
@@ -488,9 +537,9 @@ def _run_twitter(url: str, note: str, platform: str, work_dir: Path) -> Pipeline
             priority=priority,
         )
     except yt_dlp.utils.DownloadError as exc:
-        log.info("Twitter'da video bulunamadı (%s), metin tweet olarak işleniyor.", exc)
+        log.info("Twitter'da video indirilemedi (%s), metin olarak işleniyor.", exc)
 
-    # Metin tweet: oEmbed ile içerik çek
+    # Metin tweet: içerik çek
     tweet_text, title = fetch_tweet_text(url)
     if not tweet_text:
         raise ValueError("Tweet metni alınamadı ve video da bulunamadı.")

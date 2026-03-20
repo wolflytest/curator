@@ -32,10 +32,11 @@ from config import (
 log = logging.getLogger(__name__)
 
 # Desteklenen platform URL'leri
+# [^\s>)\]\}]* — boşluk ve kapanış karakterlerini almaz (parantez, köşeli parantez vs.)
 URL_RE = re.compile(
     r"https?://(?:www\.)?"
     r"(?:instagram\.com|tiktok\.com|youtube\.com|youtu\.be|twitter\.com|x\.com)"
-    r"\S+",
+    r"[^\s>)\]\}]*",
     re.IGNORECASE,
 )
 
@@ -46,10 +47,10 @@ TAG_RE = re.compile(r"#([\w\u00c0-\u024f\u0400-\u04ff]+)", re.UNICODE)
 def _parse_tags_and_note(text: str, urls: list[str]) -> tuple[list[str], str]:
     """
     Mesaj metninden tag listesi ve not çıkar.
-    - Tags: #kelime şeklindeki ifadeler
+    - Tags: #kelime şeklindeki ifadeler (lowercase normalize edilir)
     - Not: URL'ler ve tag'ler çıkarıldıktan sonra kalan metin
     """
-    tags = TAG_RE.findall(text)
+    tags = [t.lower() for t in TAG_RE.findall(text)]
     note = text
     for url in urls:
         note = note.replace(url, "")
@@ -215,6 +216,43 @@ async def cmd_istatistik(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def cmd_tag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/tag <etiket> — bu tag'e sahip kayıtları listeler."""
+    if not _auth(update):
+        return
+    tag = (context.args[0] if context.args else "").lstrip("#").lower()
+    if not tag:
+        await update.message.reply_text("❓ Kullanım: `/tag python`", parse_mode="Markdown")
+        return
+    rows = db.search_by_tag(tag)
+    if not rows:
+        await update.message.reply_text(f"🔍 `#{tag}` ile eşleşen kayıt yok.", parse_mode="Markdown")
+        return
+    lines = [f"🏷 *#{tag}* — {len(rows)} kayıt\n"]
+    for row in rows:
+        lines.append(
+            f"*[{row['id']}] {row['title']}*\n"
+            f"📱 {row['platform']} | 🏆 {row['priority']}/10 | 🕐 {row['created_at'][:10]}\n"
+            f"🔗 {row['url']}\n"
+        )
+    for chunk in _split_message("\n".join(lines)):
+        await update.message.reply_text(chunk, parse_mode="Markdown")
+
+
+async def cmd_sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/sil <id> — kaydı veritabanından siler."""
+    if not _auth(update):
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("❓ Kullanım: `/sil 42`", parse_mode="Markdown")
+        return
+    content_id = int(context.args[0])
+    if db.delete_content(content_id):
+        await update.message.reply_text(f"🗑 Kayıt #{content_id} silindi.")
+    else:
+        await update.message.reply_text(f"❌ #{content_id} ID'li kayıt bulunamadı.")
+
+
 async def send_daily_summary(app: Application) -> None:
     """Günlük özet mesajını hazırla ve gönder."""
     log.info("Günlük özet gönderiliyor...")
@@ -252,6 +290,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("ozet", cmd_ozet))
     app.add_handler(CommandHandler("soru", cmd_soru))
     app.add_handler(CommandHandler("istatistik", cmd_istatistik))
+    app.add_handler(CommandHandler("tag", cmd_tag))
+    app.add_handler(CommandHandler("sil", cmd_sil))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     scheduler = AsyncIOScheduler()

@@ -32,7 +32,14 @@
       "Bash(venv/bin/python -c \"\nfrom dotenv import load_dotenv; load_dotenv\\(\\)\nfrom google import genai\nimport os\nclient = genai.Client\\(api_key=os.environ['GEMINI_API_KEY']\\)\nmodels = [m.name for m in client.models.list\\(\\) if 'flash' in m.name.lower\\(\\)]\nfor m in sorted\\(models\\):\n    print\\(m\\)\n\" 2>&1)",
       "Bash(venv/bin/python -c \"import pipeline; print\\('PRIMARY:', pipeline.GEMINI_MODEL_PRIMARY\\); print\\('FALLBACK:', pipeline.GEMINI_MODEL_FALLBACK\\)\")",
       "Bash(venv/bin/python -c \"import chat, bot; print\\('OK'\\)\")",
-      "Bash(venv/bin/python -c \"import httpx; print\\(httpx.__version__\\)\" 2>&1)"
+      "Bash(venv/bin/python -c \"import httpx; print\\(httpx.__version__\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom pipeline import fetch_tweet_text\nurl = 'https://x.com/suryanshti777/status/2034663049584693489?s=46'\ntry:\n    text, title = fetch_tweet_text\\(url\\)\n    print\\('Başlık:', title\\)\n    print\\('Metin:', text[:500]\\)\nexcept Exception as e:\n    print\\('HATA:', e\\)\n\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom pipeline import fetch_tweet_text\nurl = 'https://x.com/suryanshti777/status/2034663049584693489?s=46'\ntry:\n    text, title = fetch_tweet_text\\(url\\)\n    print\\('Başlık:', title\\)\n    print\\('Metin:', text\\)\nexcept Exception as e:\n    print\\('HATA:', e\\)\n\" 2>&1)",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__read_text_file",
+      "Bash(python3 -m py_compile main.py bot.py pipeline.py chat.py db.py config.py)",
+      "Bash(grep:*)",
+      "Bash(venv/bin/python -m yt_dlp --list-extractors)"
     ]
   }
 }

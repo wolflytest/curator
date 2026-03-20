@@ -9,13 +9,11 @@ from google.genai import errors as genai_errors
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 import db
-from config import GEMINI_API_KEY
+from config import CHAT_CONTEXT_LIMIT, GEMINI_API_KEY, GEMINI_MODEL_FALLBACK, GEMINI_MODEL_PRIMARY
 
 log = logging.getLogger(__name__)
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-GEMINI_MODEL_PRIMARY  = "gemini-3.1-flash-lite-preview"
-GEMINI_MODEL_FALLBACK = "gemini-2.5-flash-lite"
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -26,7 +24,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 def _build_context() -> str:
     """DB'deki tüm içerikleri Gemini'ye verilecek bağlam metnine dönüştür."""
-    rows = db.get_all_contents()
+    rows = db.get_all_contents(limit=CHAT_CONTEXT_LIMIT)
     if not rows:
         return "Veritabanında henüz kayıtlı içerik yok."
 
