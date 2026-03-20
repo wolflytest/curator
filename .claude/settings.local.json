@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/emre/curator -maxdepth 3 -type f -name *.md -o -name *.json -o -name *.toml -o -name .cursorrules -o -name Makefile)",
+      "Bash(find /home/emre/curator -maxdepth 2 -type f \\\\\\(-name *.py -o -name *.js -o -name *.ts -o -name *.sh \\\\\\))",
+      "Bash(python3 /home/emre/curator/venv/bin/python -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(/home/emre/curator/venv/bin/pip install:*)",
+      "Bash(venv/bin/python -c \"\nimport config, db, pipeline, bot, main\nprint\\('✅ Tüm modüller başarıyla import edildi'\\)\n\" 2>&1)",
+      "Bash(venv/bin/pip install:*)",
+      "Bash(venv/bin/python -c \"import config, db, pipeline, bot, main; print\\('✅ Tüm modüller başarıyla import edildi'\\)\" 2>&1)",
+      "Bash(venv/bin/pip freeze:*)",
+      "Bash(venv/bin/python -c \"\nfrom google import genai\nimport config\nclient = genai.Client\\(api_key=config.GEMINI_API_KEY\\)\nfor m in client.models.list\\(\\):\n    if 'flash' in m.name.lower\\(\\):\n        print\\(m.name\\)\n\")",
+      "Bash(claude mcp:*)",
+      "Bash(npm search:*)",
+      "Bash(npx -y mcp-server-sqlite-npx --help)",
+      "Bash(npx -y @executeautomation/database-mcp-server --help)",
+      "Bash(timeout 8 npx -y mcp-server-sqlite-npx /home/emre/curator/curator.db)",
+      "Bash(uv tool:*)",
+      "Bash(pip show:*)",
+      "Bash(python3 -m mcp --help)",
+      "Bash(pip3 install:*)",
+      "Bash(venv/bin/python -c \"import bot, chat; print\\('✅ Import OK'\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"import pipeline, chat; print\\('✅ OK'\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"import bot; print\\('✅ OK'\\)\")",
+      "Bash(venv/bin/python -c \"import pipeline; print\\('✅ OK'\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"import pipeline; print\\('✅ OK | model:', pipeline.GEMINI_MODEL\\)\" 2>&1)",
+      "Bash(venv/bin/python -c \"\nfrom google import genai\nimport config\nclient = genai.Client\\(api_key=config.GEMINI_API_KEY\\)\nfor m in client.models.list\\(\\):\n    if '3' in m.name:\n        print\\(m.name\\)\n\")"
+    ]
+  }
+}
