@@ -513,11 +513,50 @@ def _url_to_id(url: str) -> str:
     return safe[:40] or "unknown"
 
 
+def _read_openclaw_token() -> str | None:
+    """~/.openclaw/config.yaml dosyasından gateway token'ını oku."""
+    config_path = Path.home() / ".openclaw" / "config.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        import yaml
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        # Olası key isimleri
+        for key in ("token", "gateway_token", "api_token", "secret"):
+            if data.get(key):
+                return str(data[key])
+    except Exception as exc:
+        log.warning("OpenClaw token okunamadı: %s", exc)
+    return None
+
+
+def _notify_openclaw_gateway(filename: str) -> None:
+    """
+    OpenClaw gateway'e yeni dosyayı ingest etmesi için mesaj gönder.
+    Hata olursa sadece loglar, pipeline'ı kesmez.
+    """
+    gateway_url = "http://localhost:18789/api/agent/message"
+    token = _read_openclaw_token()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    body = {"message": f"Ingest new file: ~/curator/openclaw_knowledge/{filename} into knowledge base"}
+    try:
+        resp = httpx.post(gateway_url, json=body, headers=headers, timeout=10)
+        resp.raise_for_status()
+        log.info("OpenClaw gateway bildirildi: %s (HTTP %d)", filename, resp.status_code)
+    except httpx.ConnectError:
+        log.warning("OpenClaw gateway bağlantısı kurulamadı (localhost:18789 çalışıyor mu?)")
+    except Exception as exc:
+        log.warning("OpenClaw gateway bildirimi başarısız: %s", exc)
+
+
 def save_to_openclaw(result: PipelineResult, url: str) -> Path:
     """
-    Analiz sonucunu openclaw_knowledge/ dizinine Markdown olarak kaydet.
+    Analiz sonucunu openclaw_knowledge/ dizinine Markdown olarak kaydet,
+    ardından OpenClaw gateway'e ingest bildirimi gönder.
     Dosya adı: {platform}_{id}_{tarih}.md
-    Var olan dosyanın üzerine yazar (aynı URL tekrar işlenirse).
     """
     from datetime import date
     today = date.today().strftime("%Y%m%d")
@@ -541,6 +580,7 @@ def save_to_openclaw(result: PipelineResult, url: str) -> Path:
 """
     filepath.write_text(content, encoding="utf-8")
     log.info("OpenClaw'a kaydedildi: %s", filepath.name)
+    _notify_openclaw_gateway(filename)
     return filepath
 
 

@@ -35,6 +35,7 @@ pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 pyparsing==3.3.2
+PyYAML==6.0.3
 python-dotenv==1.2.2
 python-telegram-bot==22.7
 requests==2.32.5

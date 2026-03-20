@@ -39,7 +39,8 @@
       "mcp__filesystem__read_text_file",
       "Bash(python3 -m py_compile main.py bot.py pipeline.py chat.py db.py config.py)",
       "Bash(grep:*)",
-      "Bash(venv/bin/python -m yt_dlp --list-extractors)"
+      "Bash(venv/bin/python -m yt_dlp --list-extractors)",
+      "Bash(venv/bin/pip show:*)"
     ]
   }
 }
