@@ -7,6 +7,7 @@ Telegram botu:
 import asyncio
 import logging
 import re
+import shutil
 from functools import partial
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -113,6 +114,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     tags, note = _parse_tags_and_note(text, urls)
     log.info("Tags: %s | Not: %s", tags, note[:60] if note else "—")
 
+    if "sarki" in tags:
+        for url in urls:
+            await _recognize_song(update, url)
+        return
+
     for url in urls:
         status_msg = await update.message.reply_text(
             f"⏳ İşleniyor: `{url}`",
@@ -156,6 +162,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"❌ Hata oluştu:\n`{exc}`",
                 parse_mode="Markdown",
             )
+
+
+async def _recognize_song(update: Update, url: str) -> None:
+    """Video/reels'deki şarkıyı Shazam ile tanı ve kullanıcıya bildir."""
+    from shazamio import Shazam
+
+    status_msg = await update.message.reply_text(
+        f"🎵 Şarkı aranıyor: `{url}`",
+        parse_mode="Markdown",
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        audio_bytes, title = await loop.run_in_executor(
+            None, pl.prepare_audio_for_recognition, url
+        )
+        shazam = Shazam()
+        out = await shazam.recognize(audio_bytes)
+        track = out.get("track", {})
+        if not track:
+            await status_msg.edit_text("❓ Şarkı tanınamadı.")
+            return
+
+        song_title = track.get("title", "Bilinmiyor")
+        artist = track.get("subtitle", "Bilinmiyor")
+        # Şarkı sayfası linki (varsa)
+        share = track.get("share", {})
+        song_url = share.get("href", "")
+        url_line = f"\n🔗 {song_url}" if song_url else ""
+
+        await status_msg.edit_text(
+            f"🎵 *{song_title}*\n🎤 {artist}{url_line}",
+            parse_mode="Markdown",
+        )
+        log.info("Şarkı tanındı: %s — %s", song_title, artist)
+    except Exception as exc:
+        log.error("Şarkı tanıma hatası: %s", exc, exc_info=True)
+        await status_msg.edit_text(f"❌ Hata: `{exc}`", parse_mode="Markdown")
 
 
 async def handle_chat(update: Update, text: str) -> None:

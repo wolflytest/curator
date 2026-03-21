@@ -584,6 +584,21 @@ def save_to_openclaw(result: PipelineResult, url: str) -> Path:
     return filepath
 
 
+def prepare_audio_for_recognition(url: str) -> tuple[bytes, str]:
+    """
+    Şarkı tanıma için video indir ve ses ayıkla.
+    (audio_bytes, başlık) döndürür; geçici dosyaları temizler.
+    """
+    work_dir = Path(tempfile.mkdtemp(dir=TMP_DIR))
+    try:
+        video_path, title = download_video(url, work_dir)
+        audio_path = extract_audio(video_path, work_dir)
+        return audio_path.read_bytes(), title
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        log.info("Geçici dosyalar temizlendi: %s", work_dir)
+
+
 def run(url: str, note: str = "") -> PipelineResult:
     """
     Tam işlem hattını çalıştır.

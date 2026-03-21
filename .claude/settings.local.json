@@ -40,7 +40,8 @@
       "Bash(python3 -m py_compile main.py bot.py pipeline.py chat.py db.py config.py)",
       "Bash(grep:*)",
       "Bash(venv/bin/python -m yt_dlp --list-extractors)",
-      "Bash(venv/bin/pip show:*)"
+      "Bash(venv/bin/pip show:*)",
+      "Bash(venv/bin/python -c \"import bot; import pipeline; from shazamio import Shazam; print\\('OK'\\)\")"
     ]
   }
 }
